@@ -99,37 +99,23 @@ let highlightUntil = 0;
 // Render poll tallies into the poll element. Expects an object with
 // properties: options (array of option names), tallies (map of option -> count),
 // endsAt (optional timestamp), ended (optional boolean) and winner (optional).
-// Render the poll UI. Displays a header prompting viewers to vote,
-// horizontal bars for each option showing the proportion of votes,
-// and either a live countdown or the winner when the poll ends.
 function renderPoll(info) {
-  if (!info || !info.options) {
-    pollEl.style.display = "none";
-    return;
-  }
-  const { options, tallies = {}, endsAt, ended, winner } = info;
-  const total = options.reduce((sum, opt) => sum + (tallies[opt] || 0), 0);
-  // Build HTML for poll: header, rows for options and counts, footer for
-  // countdown or winner announcement.
-  let html = '';
-  // Only show instructions when the poll is active (not ended)
-  if (!ended) {
-    const optText = options.join(' or ');
-    html += `<div class="pollHeader">Vote: type <strong>${optText}</strong> in chat</div>`;
-  }
+  if (!info || !info.options) return;
+  const { options, tallies, endsAt, ended, winner } = info;
+  const total = options.reduce((sum, opt) => sum + (tallies && tallies[opt] ? tallies[opt] : 0), 0);
+  const lines = [];
   options.forEach((opt) => {
-    const count = tallies[opt] || 0;
+    const count = tallies && tallies[opt] ? tallies[opt] : 0;
     const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-    html += `<div class="pollRow"><span class="pollLabel">${opt}</span><div class="pollBar"><div class="pollBarFill" style="width:${pct}%"></div></div><span class="pollCount">${count} (${pct}%)</span></div>`;
+    lines.push(`${opt}: ${count} (${pct}%)`);
   });
   if (ended && winner) {
-    html += `<div class="pollResult">Winner: ${winner}</div>`;
+    lines.push(`Winner: ${winner}`);
   } else if (endsAt) {
     const secsLeft = Math.max(0, Math.floor((endsAt - Date.now()) / 1000));
-    html += `<div class="pollCountdown">Time left: ${secsLeft}s</div>`;
+    lines.push(`Time left: ${secsLeft}s`);
   }
-  pollEl.innerHTML = html;
-  pollEl.style.display = "block";
+  pollEl.textContent = lines.join(" | ");
 }
 
 function addMessage({ nickname, text, isCorrect, tier }) {
@@ -167,10 +153,9 @@ function showWinner({ nickname, guess, highlightMs }) {
   winnerEl.style.display = "block";
   // Compose the popup text: WINNER: @nickname
   winnerEl.textContent = `WINNER: ${nickname}`;
-  // Play a short notification sound when someone wins
-  playWinnerSound();
+  // Play a short notification sound when someone wins (twice)
+  playWinnerSoundTwice();
 }
-
 function clearWinnerBannerIfExpired() {
   if (highlightUntil && Date.now() > highlightUntil) {
     winnerEl.style.display = "none";
@@ -179,6 +164,67 @@ function clearWinnerBannerIfExpired() {
 }
 
 setInterval(clearWinnerBannerIfExpired, 1000);
+
+// --- Winner sound setup ---
+const winnerAudio = new Audio('/sound.wav');
+winnerAudio.preload = 'auto';
+
+// Autoplay policies require a user gesture. Show a small button until we unlock audio.
+let audioUnlocked = false;
+let unmuteBtn = document.getElementById('unmuteSound');
+if (!unmuteBtn) {
+  unmuteBtn = document.createElement('button');
+  unmuteBtn.id = 'unmuteSound';
+  unmuteBtn.className = 'primary';
+  unmuteBtn.textContent = 'Enable sound';
+  unmuteBtn.style.position = 'absolute';
+  unmuteBtn.style.top = '10px';
+  unmuteBtn.style.right = '10px';
+  unmuteBtn.style.zIndex = '9999';
+  unmuteBtn.style.display = 'none';
+  const card = document.querySelector('.card') || document.body;
+  card.appendChild(unmuteBtn);
+}
+
+// Try to prime on any pointer/click. If it fails, show the button.
+function tryUnlockAudio() {
+  if (audioUnlocked) return;
+  winnerAudio.play().then(() => {
+    winnerAudio.pause();
+    winnerAudio.currentTime = 0;
+    audioUnlocked = true;
+    unmuteBtn.style.display = 'none';
+  }).catch(() => {
+    unmuteBtn.style.display = 'inline-block';
+  });
+}
+window.addEventListener('pointerdown', tryUnlockAudio, { once: false });
+unmuteBtn.addEventListener('click', tryUnlockAudio);
+
+function playWinnerSoundTwice() {
+  const playOnce = () => {
+    try {
+      winnerAudio.currentTime = 0;
+      winnerAudio.play().catch(() => {});
+    } catch (e) {}
+  };
+  playOnce();
+  setTimeout(playOnce, 250);
+}
+
+
+// Preload winner sound and define play function
+const winnerAudio = new Audio('/sound.wav');
+winnerAudio.load();
+function playWinnerSound() {
+  try {
+    winnerAudio.currentTime = 0;
+    winnerAudio.play().catch(() => {});
+  } catch (e) {
+    // ignore errors
+  }
+}
+
 
 // Render the leaderboard. Accepts an array of entries sorted by
 // descending wins_total. Each entry should have display_name, wins_total,
@@ -419,15 +465,3 @@ function updateTimerText() {
 
 // Regularly update the timer text to reflect the countdown.
 setInterval(updateTimerText, 1000);
-
-/// Play a short notification sound when a user wins.
-function playWinnerSound() {
-  try {
-    const audio = new Audio('/sound.wav');
-    audio.play().catch(() => {});
-  } catch (e) {
-    // silently ignore errors
-  }
-}
-
-   
